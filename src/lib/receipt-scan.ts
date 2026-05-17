@@ -77,37 +77,95 @@ function normalizeItems(data: unknown): ReceiptScanResult[] {
   return items;
 }
 
-function parseGeminiError(status: number, detail: string): string {
-  let message = detail;
+export type ReceiptScanErrorDetails = {
+  status?: number;
+  statusText?: string;
+  model?: string;
+  apiMessage?: string;
+  reason?: string;
+  raw?: string;
+};
+
+export class ReceiptScanError extends Error {
+  readonly details: ReceiptScanErrorDetails;
+
+  constructor(summary: string, details: ReceiptScanErrorDetails = {}) {
+    super(summary);
+    this.name = "ReceiptScanError";
+    this.details = details;
+  }
+}
+
+export function isReceiptScanError(err: unknown): err is ReceiptScanError {
+  return err instanceof ReceiptScanError;
+}
+
+function extractApiMessage(detail: string): string {
   try {
     const json = JSON.parse(detail) as {
-      error?: { message?: string };
+      error?: { message?: string; status?: string };
     };
-    message = json.error?.message ?? detail;
+    const msg = json.error?.message ?? detail;
+    const status = json.error?.status;
+    return status ? `${status}: ${msg}` : msg;
   } catch {
-    // plain text
+    return detail.trim() || "(レスポンス本文なし)";
   }
+}
+
+function buildScanError(
+  status: number,
+  statusText: string,
+  detail: string,
+  model: string,
+): ReceiptScanError {
+  const apiMessage = extractApiMessage(detail);
+  const details: ReceiptScanErrorDetails = {
+    status,
+    statusText,
+    model,
+    apiMessage,
+    raw: detail.length > 800 ? `${detail.slice(0, 800)}…` : detail,
+  };
 
   if (status === 429) {
-    if (/limit:\s*0/i.test(message) || /quota/i.test(message)) {
-      return (
-        "Gemini API の無料枠が有効になっていない可能性があります。Google AI Studio で API キーのプロジェクトを確認するか、1〜2分待ってから再試行してください。"
+    if (/limit:\s*0/i.test(apiMessage) || /quota/i.test(apiMessage)) {
+      return new ReceiptScanError(
+        "Gemini API の無料枠が有効になっていない可能性があります。API キーのプロジェクト（expense-tracker-de45e 推奨）を確認してください。",
+        { ...details, reason: "QUOTA_ZERO" },
       );
     }
-    return (
-      "利用回数の上限に達しました（429）。1〜2分待ってから再試行してください。今日の上限の場合は明日以降にお試しください。"
+    return new ReceiptScanError(
+      "利用回数の上限に達しました（429）。1〜2分待ってから再試行してください。",
+      { ...details, reason: "RATE_LIMIT" },
     );
   }
 
   if (status === 403) {
-    return "Gemini API へのアクセスが拒否されました。API キーの制限（リファラー等）を確認してください。";
+    return new ReceiptScanError(
+      "Gemini API へのアクセスが拒否されました。API キーの HTTP リファラー制限を確認してください。",
+      { ...details, reason: "FORBIDDEN" },
+    );
   }
 
-  if (message.includes("API_KEY") || status === 400) {
-    return "Gemini API キーが無効です。Google AI Studio でキーを確認してください。";
+  if (apiMessage.includes("API_KEY") || status === 400) {
+    return new ReceiptScanError(
+      "Gemini API キーが無効です。Google AI Studio でキーを確認してください。",
+      { ...details, reason: "INVALID_KEY" },
+    );
   }
 
-  return `レシートの解析に失敗しました（${status}）`;
+  if (status === 404) {
+    return new ReceiptScanError(
+      `モデルが利用できません（404）。別モデルへの切替を試しました: ${model}`,
+      { ...details, reason: "MODEL_NOT_FOUND" },
+    );
+  }
+
+  return new ReceiptScanError(
+    `レシートの解析に失敗しました（HTTP ${status}）`,
+    details,
+  );
 }
 
 async function fileToBase64(file: Blob): Promise<{ base64: string; mimeType: string }> {
@@ -129,30 +187,36 @@ function sleep(ms: number): Promise<void> {
 
 /** アップロード前に画像を縮小（API の精度・速度向上） */
 export async function compressReceiptImage(file: File): Promise<Blob> {
-  if (!file.type.startsWith("image/")) return file;
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(
+      1,
+      MAX_IMAGE_EDGE / Math.max(bitmap.width, bitmap.height),
+    );
+    const width = Math.round(bitmap.width * scale);
+    const height = Math.round(bitmap.height * scale);
 
-  const bitmap = await createImageBitmap(file);
-  const scale = Math.min(1, MAX_IMAGE_EDGE / Math.max(bitmap.width, bitmap.height));
-  const width = Math.round(bitmap.width * scale);
-  const height = Math.round(bitmap.height * scale);
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      bitmap.close();
+      return file;
+    }
 
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) {
+    ctx.drawImage(bitmap, 0, 0, width, height);
     bitmap.close();
+
+    const blob = await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob(resolve, "image/jpeg", 0.82);
+    });
+
+    return blob ?? file;
+  } catch {
+    // iOS の HEIC など createImageBitmap 非対応時は元ファイルを使う
     return file;
   }
-
-  ctx.drawImage(bitmap, 0, 0, width, height);
-  bitmap.close();
-
-  const blob = await new Promise<Blob | null>((resolve) => {
-    canvas.toBlob(resolve, "image/jpeg", 0.82);
-  });
-
-  return blob ?? file;
 }
 
 async function callGemini(
@@ -188,8 +252,9 @@ async function callGemini(
 async function scanWithGemini(file: File): Promise<ReceiptScanResponse> {
   const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY?.trim();
   if (!apiKey) {
-    throw new Error(
+    throw new ReceiptScanError(
       "レシート読み取り用の API キーが未設定です。.env.local に NEXT_PUBLIC_GEMINI_API_KEY を追加し、再デプロイしてください。",
+      { reason: "MISSING_API_KEY" },
     );
   }
 
@@ -213,7 +278,10 @@ async function scanWithGemini(file: File): Promise<ReceiptScanResponse> {
 JSON形式（この形式のみ）:
 {"storeName":string|null,"date":string|null,"items":[{"itemName":string,"amount":number,"category":string}]}`;
 
-  let lastError = "レシートの解析に失敗しました";
+  let lastError: ReceiptScanError = new ReceiptScanError(
+    "レシートの解析に失敗しました",
+    { reason: "UNKNOWN" },
+  );
 
   for (const model of GEMINI_MODELS) {
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
@@ -226,11 +294,16 @@ JSON形式（この形式のみ）:
 
       if (!response.ok) {
         const detail = await response.text().catch(() => "");
-        lastError = parseGeminiError(response.status, detail);
+        lastError = buildScanError(
+          response.status,
+          response.statusText,
+          detail,
+          model,
+        );
         if (response.status === 429 || response.status === 404) {
           break;
         }
-        throw new Error(lastError);
+        throw lastError;
       }
 
       const payload = (await response.json()) as {
@@ -239,8 +312,10 @@ JSON形式（この形式のみ）:
 
       const text = payload.candidates?.[0]?.content?.parts?.[0]?.text;
       if (!text) {
-        lastError =
-          "レシートから明細を読み取れませんでした。写真を明るく、全体が写るように撮り直してください。";
+        lastError = new ReceiptScanError(
+          "レシートから明細を読み取れませんでした。写真を明るく、全体が写るように撮り直してください。",
+          { model, reason: "EMPTY_RESPONSE" },
+        );
         break;
       }
 
@@ -248,8 +323,9 @@ JSON形式（この形式のみ）:
       try {
         parsed = extractJson(text);
       } catch {
-        throw new Error(
+        throw new ReceiptScanError(
           "レシートの解析結果を解釈できませんでした。もう一度お試しください。",
+          { model, reason: "INVALID_JSON" },
         );
       }
 
@@ -258,10 +334,11 @@ JSON形式（この形式のみ）:
 
       if (items.length === 0) {
         const storeName = String(record.storeName ?? "").trim();
-        throw new Error(
+        throw new ReceiptScanError(
           storeName
             ? `「${storeName}」の明細を読み取れませんでした。レシート全体が写っているか確認してください。`
             : "明細を読み取れませんでした。レシート全体が写っているか確認してください。",
+          { model, reason: "NO_ITEMS" },
         );
       }
 
@@ -278,7 +355,7 @@ JSON形式（この形式のみ）:
     }
   }
 
-  throw new Error(lastError);
+  throw lastError;
 }
 
 /** レシート画像を解析（Gemini Vision） */
@@ -286,7 +363,9 @@ export async function scanReceiptFromImage(
   file: File,
 ): Promise<ReceiptScanResponse> {
   if (!file.type.startsWith("image/")) {
-    throw new Error("画像ファイルを選択してください");
+    throw new ReceiptScanError("画像ファイルを選択してください", {
+      reason: "INVALID_FILE",
+    });
   }
 
   return scanWithGemini(file);

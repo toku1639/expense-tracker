@@ -5,8 +5,10 @@ import { useCallback, useId, useRef, useState } from "react";
 import {
   createReceiptPreviewUrl,
   isReceiptScanConfigured,
+  isReceiptScanError,
   revokeReceiptPreviewUrl,
   scanReceiptFromImage,
+  type ReceiptScanErrorDetails,
   type ReceiptScanResponse,
   type ReceiptScanResult,
 } from "@/lib/receipt-scan";
@@ -34,8 +36,14 @@ export function ReceiptCameraSection({
   const [scanResult, setScanResult] = useState<ReceiptScanResponse | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [error, setError] = useState<string | null>(null);
+  const [errorDetails, setErrorDetails] = useState<ReceiptScanErrorDetails | null>(
+    null,
+  );
+  const [showErrorDetails, setShowErrorDetails] = useState(false);
 
   const configured = isReceiptScanConfigured();
+  const cameraBusy = disabled || scanning || saving;
+  const canOpenCamera = configured && !cameraBusy;
 
   const clearPreview = useCallback(() => {
     setPreviewUrl((prev) => {
@@ -49,24 +57,27 @@ export function ReceiptCameraSection({
     setSelected(new Set());
     clearPreview();
     setError(null);
+    setErrorDetails(null);
+    setShowErrorDetails(false);
   }, [clearPreview]);
-
-  const openCamera = () => {
-    if (disabled || scanning || saving || !configured) return;
-    setError(null);
-    fileInputRef.current?.click();
-  };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
 
-    clearScan();
+    setError(null);
+    setErrorDetails(null);
+    setShowErrorDetails(false);
+    setScanResult(null);
+    setSelected(new Set());
     setScanning(true);
 
     const preview = createReceiptPreviewUrl(file);
-    setPreviewUrl(preview);
+    setPreviewUrl((prev) => {
+      if (prev) revokeReceiptPreviewUrl(prev);
+      return preview;
+    });
 
     try {
       const result = await scanReceiptFromImage(file);
@@ -78,9 +89,17 @@ export function ReceiptCameraSection({
       }
     } catch (err) {
       clearPreview();
-      setError(
-        err instanceof Error ? err.message : "読み取りに失敗しました",
-      );
+      if (isReceiptScanError(err)) {
+        setError(err.message);
+        setErrorDetails(err.details);
+        console.error("[receipt-scan]", err.message, err.details);
+      } else {
+        setError(
+          err instanceof Error ? err.message : "読み取りに失敗しました",
+        );
+        setErrorDetails(null);
+        console.error("[receipt-scan]", err);
+      }
     } finally {
       setScanning(false);
     }
@@ -128,11 +147,15 @@ export function ReceiptCameraSection({
       .filter((_, i) => selected.has(i))
       .reduce((sum, item) => sum + item.amount, 0) ?? 0;
 
+  const cameraButtonClass =
+    "flex w-full items-center justify-center gap-2 rounded-xl border border-teal-300 bg-white px-3 py-2.5 text-sm font-semibold text-teal-800 shadow-sm transition hover:bg-teal-50 active:bg-teal-100";
+
   return (
     <section
       className="rounded-xl border border-dashed border-teal-200 bg-teal-50/60 p-3"
       aria-busy={scanning || saving}
     >
+      {/* スマホでは label 経由の方がカメラ起動が安定する */}
       <input
         ref={fileInputRef}
         id={inputId}
@@ -140,7 +163,7 @@ export function ReceiptCameraSection({
         accept="image/*"
         capture="environment"
         className="sr-only"
-        disabled={disabled || scanning || saving || !configured}
+        tabIndex={-1}
         onChange={handleFileChange}
       />
 
@@ -162,28 +185,43 @@ export function ReceiptCameraSection({
         )}
 
         <div className="min-w-0 flex-1">
-          <button
-            type="button"
-            onClick={openCamera}
-            disabled={disabled || scanning || saving || !configured}
-            className="flex w-full items-center justify-center gap-2 rounded-xl border border-teal-300 bg-white px-3 py-2.5 text-sm font-semibold text-teal-800 shadow-sm transition hover:bg-teal-50 active:bg-teal-100 disabled:opacity-60"
-          >
-            {scanning ? (
-              <>
-                <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
-                レシートを解析中…
-              </>
-            ) : (
-              <>
-                <Camera className="h-4 w-4 shrink-0" aria-hidden />
-                カメラでレシートを読み取る
-              </>
-            )}
-          </button>
+          {canOpenCamera ? (
+            <label htmlFor={inputId} className={`${cameraButtonClass} cursor-pointer`}>
+              {scanning ? (
+                <>
+                  <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+                  レシートを解析中…
+                </>
+              ) : (
+                <>
+                  <Camera className="h-4 w-4 shrink-0" aria-hidden />
+                  カメラでレシートを読み取る
+                </>
+              )}
+            </label>
+          ) : (
+            <button
+              type="button"
+              disabled
+              className={`${cameraButtonClass} cursor-not-allowed opacity-60`}
+            >
+              {scanning ? (
+                <>
+                  <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+                  レシートを解析中…
+                </>
+              ) : (
+                <>
+                  <Camera className="h-4 w-4 shrink-0" aria-hidden />
+                  カメラでレシートを読み取る
+                </>
+              )}
+            </button>
+          )}
 
           {!configured ? (
             <p className="mt-2 text-xs leading-relaxed text-amber-800">
-              API キー未設定です。.env.local に NEXT_PUBLIC_GEMINI_API_KEY を追加し、npm run deploy:hosting で再公開してください。
+              API キー未設定です。再デプロイ（npm run deploy:hosting）が必要な場合があります。
             </p>
           ) : (
             <p className="mt-2 text-xs leading-relaxed text-teal-800/80">
@@ -265,9 +303,55 @@ export function ReceiptCameraSection({
       )}
 
       {error && (
-        <p className="mt-2 text-xs text-red-600" role="alert">
-          {error}
-        </p>
+        <div className="mt-2 rounded-lg border border-red-200 bg-red-50 p-2.5" role="alert">
+          <p className="text-xs font-medium text-red-700">{error}</p>
+          {errorDetails && (
+            <div className="mt-2">
+              <button
+                type="button"
+                onClick={() => setShowErrorDetails((v) => !v)}
+                className="text-xs text-red-600 underline"
+              >
+                {showErrorDetails ? "詳細を隠す" : "エラーの詳細を見る"}
+              </button>
+              {showErrorDetails && (
+                <dl className="mt-2 space-y-1 text-[11px] leading-relaxed text-red-800/90">
+                  {errorDetails.status != null && (
+                    <>
+                      <dt className="font-medium">HTTP</dt>
+                      <dd className="mb-1 font-mono">
+                        {errorDetails.status}
+                        {errorDetails.statusText
+                          ? ` ${errorDetails.statusText}`
+                          : ""}
+                      </dd>
+                    </>
+                  )}
+                  {errorDetails.model && (
+                    <>
+                      <dt className="font-medium">モデル</dt>
+                      <dd className="mb-1 font-mono">{errorDetails.model}</dd>
+                    </>
+                  )}
+                  {errorDetails.reason && (
+                    <>
+                      <dt className="font-medium">種別</dt>
+                      <dd className="mb-1 font-mono">{errorDetails.reason}</dd>
+                    </>
+                  )}
+                  {errorDetails.apiMessage && (
+                    <>
+                      <dt className="font-medium">API メッセージ</dt>
+                      <dd className="mb-1 break-all whitespace-pre-wrap">
+                        {errorDetails.apiMessage}
+                      </dd>
+                    </>
+                  )}
+                </dl>
+              )}
+            </div>
+          )}
+        </div>
       )}
     </section>
   );
