@@ -14,6 +14,8 @@ const withPWA = withPWAInit({
 
 const nextConfig: NextConfig = {
   reactCompiler: true,
+  output: "export",
+  trailingSlash: true,
 };
 
 export default withPWA(nextConfig);

@@ -9,7 +9,9 @@ import {
   type ExpenseSuggestion,
 } from "@/lib/expense-suggestions";
 import { useExpenseInput } from "@/contexts/expense-input-context";
+import { ReceiptCameraSection } from "@/components/expense/receipt-camera-section";
 import { createExpense } from "@/lib/expenses";
+import type { ReceiptScanResult } from "@/lib/receipt-scan";
 import { EXPENSE_CATEGORIES, type ExpenseInput } from "@/types/expense";
 
 type ExpenseInputSheetProps = {
@@ -107,6 +109,50 @@ export function ExpenseInputSheet({ isOpen, onClose }: ExpenseInputSheetProps) {
     setShowSuggestions(false);
   };
 
+  const applyReceiptScan = (result: ReceiptScanResult, date?: string) => {
+    setForm((prev) => ({
+      ...prev,
+      itemName: result.itemName,
+      amount: result.amount,
+      category: result.category,
+      date: date || prev.date,
+    }));
+    setAmountText(String(result.amount));
+    setShowSuggestions(false);
+    setError(null);
+  };
+
+  const applyReceiptDate = (date: string) => {
+    setForm((prev) => ({ ...prev, date }));
+  };
+
+  const saveReceiptItems = async (
+    items: ReceiptScanResult[],
+    date: string,
+  ) => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      for (const item of items) {
+        await createExpense({
+          itemName: item.itemName.trim(),
+          amount: item.amount,
+          category: item.category,
+          date,
+        });
+      }
+      setSuccess(true);
+      notifyExpenseSaved();
+      router.refresh();
+      window.setTimeout(() => onClose(), 600);
+    } catch {
+      setError("保存に失敗しました。接続を確認してください。");
+      throw new Error("save failed");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -185,6 +231,14 @@ export function ExpenseInputSheet({ isOpen, onClose }: ExpenseInputSheetProps) {
 
         <form onSubmit={handleSubmit} className="max-h-[75dvh] overflow-y-auto px-4 py-4">
           <div className="space-y-4">
+            <ReceiptCameraSection
+              formDate={form.date}
+              onApplyItem={applyReceiptScan}
+              onReceiptDate={applyReceiptDate}
+              onSaveSelected={saveReceiptItems}
+              disabled={submitting}
+            />
+
             <div className="relative">
               <label
                 htmlFor={`${formId}-item`}
