@@ -1,7 +1,7 @@
 "use client";
 
-import { Camera, Check, Loader2 } from "lucide-react";
-import { useCallback, useId, useRef, useState } from "react";
+import { Camera, Check, ImageUp, Loader2 } from "lucide-react";
+import { useCallback, useId, useState } from "react";
 import {
   createReceiptPreviewUrl,
   isReceiptScanConfigured,
@@ -28,8 +28,9 @@ export function ReceiptCameraSection({
   onSaveSelected,
   disabled = false,
 }: ReceiptCameraSectionProps) {
-  const inputId = useId();
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const baseId = useId();
+  const cameraInputId = `${baseId}-camera`;
+  const uploadInputId = `${baseId}-upload`;
   const [scanning, setScanning] = useState(false);
   const [saving, setSaving] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -43,7 +44,7 @@ export function ReceiptCameraSection({
 
   const configured = isReceiptScanConfigured();
   const cameraBusy = disabled || scanning || saving;
-  const canOpenCamera = configured && !cameraBusy;
+  const canPickImage = configured && !cameraBusy;
 
   const clearPreview = useCallback(() => {
     setPreviewUrl((prev) => {
@@ -147,8 +148,8 @@ export function ReceiptCameraSection({
       .filter((_, i) => selected.has(i))
       .reduce((sum, item) => sum + item.amount, 0) ?? 0;
 
-  const cameraButtonClass =
-    "flex w-full items-center justify-center gap-2 rounded-xl border border-teal-300 bg-white px-3 py-2.5 text-sm font-semibold text-teal-800 shadow-sm transition hover:bg-teal-50 active:bg-teal-100";
+  const pickButtonClass =
+    "flex w-full items-center justify-center gap-1.5 rounded-xl border border-teal-300 bg-white px-2 py-2.5 text-sm font-semibold text-teal-800 shadow-sm transition hover:bg-teal-50 active:bg-teal-100";
 
   return (
     <section
@@ -157,11 +158,18 @@ export function ReceiptCameraSection({
     >
       {/* スマホでは label 経由の方がカメラ起動が安定する */}
       <input
-        ref={fileInputRef}
-        id={inputId}
+        id={cameraInputId}
         type="file"
         accept="image/*"
         capture="environment"
+        className="sr-only"
+        tabIndex={-1}
+        onChange={handleFileChange}
+      />
+      <input
+        id={uploadInputId}
+        type="file"
+        accept="image/*"
         className="sr-only"
         tabIndex={-1}
         onChange={handleFileChange}
@@ -173,7 +181,7 @@ export function ReceiptCameraSection({
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={previewUrl}
-              alt="撮影したレシート"
+              alt="選択したレシート"
               className="h-full w-full object-cover"
             />
             {scanning && (
@@ -185,38 +193,50 @@ export function ReceiptCameraSection({
         )}
 
         <div className="min-w-0 flex-1">
-          {canOpenCamera ? (
-            <label htmlFor={inputId} className={`${cameraButtonClass} cursor-pointer`}>
-              {scanning ? (
-                <>
-                  <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
-                  レシートを解析中…
-                </>
-              ) : (
-                <>
-                  <Camera className="h-4 w-4 shrink-0" aria-hidden />
-                  カメラでレシートを読み取る
-                </>
-              )}
-            </label>
-          ) : (
-            <button
-              type="button"
-              disabled
-              className={`${cameraButtonClass} cursor-not-allowed opacity-60`}
+          {scanning ? (
+            <div
+              className={`${pickButtonClass} cursor-wait opacity-80`}
+              aria-live="polite"
             >
-              {scanning ? (
-                <>
-                  <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
-                  レシートを解析中…
-                </>
-              ) : (
-                <>
-                  <Camera className="h-4 w-4 shrink-0" aria-hidden />
-                  カメラでレシートを読み取る
-                </>
-              )}
-            </button>
+              <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+              レシートを解析中…
+            </div>
+          ) : canPickImage ? (
+            <div className="grid grid-cols-2 gap-2">
+              <label
+                htmlFor={cameraInputId}
+                className={`${pickButtonClass} cursor-pointer`}
+              >
+                <Camera className="h-4 w-4 shrink-0" aria-hidden />
+                撮影
+              </label>
+              <label
+                htmlFor={uploadInputId}
+                className={`${pickButtonClass} cursor-pointer`}
+              >
+                <ImageUp className="h-4 w-4 shrink-0" aria-hidden />
+                写真を選ぶ
+              </label>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                disabled
+                className={`${pickButtonClass} cursor-not-allowed opacity-60`}
+              >
+                <Camera className="h-4 w-4 shrink-0" aria-hidden />
+                撮影
+              </button>
+              <button
+                type="button"
+                disabled
+                className={`${pickButtonClass} cursor-not-allowed opacity-60`}
+              >
+                <ImageUp className="h-4 w-4 shrink-0" aria-hidden />
+                写真を選ぶ
+              </button>
+            </div>
           )}
 
           {!configured ? (
@@ -225,7 +245,7 @@ export function ReceiptCameraSection({
             </p>
           ) : (
             <p className="mt-2 text-xs leading-relaxed text-teal-800/80">
-              レシートの明細を AI が読み取り、複数件をまとめて保存できます。
+              撮影または保存済みの写真から、レシート明細を AI が読み取れます。
             </p>
           )}
         </div>
