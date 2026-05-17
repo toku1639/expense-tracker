@@ -126,7 +126,9 @@ export function ExpenseHistoryList() {
           <div className="border-b border-slate-100 px-4 pb-3 pt-4">
             <h2 className="text-sm font-semibold text-slate-900">明細</h2>
             <p className="mt-0.5 text-xs text-slate-500">
-              {viewMode === "category" ? "項目ごとにまとめて表示" : "日付の古い順"}
+              {viewMode === "category"
+                ? "項目ごとにまとめて表示 · 行をタップして編集"
+                : "日付の古い順 · 行をタップして編集"}
             </p>
           </div>
 

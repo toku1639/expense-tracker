@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { createContext, useCallback, useContext, useMemo, useState } from "react";
+import type { ExpenseDocument } from "@/types/expense";
 
 const ExpenseInputSheet = dynamic(
   () =>
@@ -11,10 +12,21 @@ const ExpenseInputSheet = dynamic(
   { ssr: false },
 );
 
+const ExpenseEditSheet = dynamic(
+  () =>
+    import("@/components/expense/expense-edit-sheet").then(
+      (m) => m.ExpenseEditSheet,
+    ),
+  { ssr: false },
+);
+
 type ExpenseInputContextValue = {
   isOpen: boolean;
   openSheet: () => void;
   closeSheet: () => void;
+  editingExpense: ExpenseDocument | null;
+  openEditSheet: (expense: ExpenseDocument) => void;
+  closeEditSheet: () => void;
   /** 支出保存後に一覧を再取得するためのトリガー */
   savedVersion: number;
   notifyExpenseSaved: () => void;
@@ -30,10 +42,25 @@ export function ExpenseInputProvider({
   children: React.ReactNode;
 }) {
   const [isOpen, setIsOpen] = useState(false);
+  const [editingExpense, setEditingExpense] = useState<ExpenseDocument | null>(
+    null,
+  );
   const [savedVersion, setSavedVersion] = useState(0);
 
-  const openSheet = useCallback(() => setIsOpen(true), []);
+  const closeEditSheet = useCallback(() => setEditingExpense(null), []);
+
+  const openSheet = useCallback(() => {
+    setEditingExpense(null);
+    setIsOpen(true);
+  }, []);
+
   const closeSheet = useCallback(() => setIsOpen(false), []);
+
+  const openEditSheet = useCallback((expense: ExpenseDocument) => {
+    setIsOpen(false);
+    setEditingExpense(expense);
+  }, []);
+
   const notifyExpenseSaved = useCallback(
     () => setSavedVersion((v) => v + 1),
     [],
@@ -44,16 +71,29 @@ export function ExpenseInputProvider({
       isOpen,
       openSheet,
       closeSheet,
+      editingExpense,
+      openEditSheet,
+      closeEditSheet,
       savedVersion,
       notifyExpenseSaved,
     }),
-    [isOpen, openSheet, closeSheet, savedVersion, notifyExpenseSaved],
+    [
+      isOpen,
+      openSheet,
+      closeSheet,
+      editingExpense,
+      openEditSheet,
+      closeEditSheet,
+      savedVersion,
+      notifyExpenseSaved,
+    ],
   );
 
   return (
     <ExpenseInputContext.Provider value={value}>
       {children}
       <ExpenseInputSheet isOpen={isOpen} onClose={closeSheet} />
+      <ExpenseEditSheet expense={editingExpense} onClose={closeEditSheet} />
     </ExpenseInputContext.Provider>
   );
 }
