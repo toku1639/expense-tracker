@@ -1,7 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
-  <rect width="512" height="512" rx="108" fill="#0f766e"/>
-  <circle cx="256" cy="256" r="140" fill="#14b8a6" opacity="0.35"/>
-  <path d="M192 314V198h128v116" stroke="#f0fdfa" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M224 198h64v48h-64z" fill="#f0fdfa"/>
-  <text x="256" y="368" text-anchor="middle" font-family="system-ui,sans-serif" font-size="72" font-weight="700" fill="#f0fdfa">¥</text>
-</svg>
