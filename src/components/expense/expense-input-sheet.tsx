@@ -129,6 +129,7 @@ export function ExpenseInputSheet({ isOpen, onClose }: ExpenseInputSheetProps) {
   const saveReceiptItems = async (
     items: ReceiptScanResult[],
     date: string,
+    paymentMethod: "cash" | "card" | "paypay" = "cash",
   ) => {
     setSubmitting(true);
     setError(null);
@@ -139,6 +140,8 @@ export function ExpenseInputSheet({ isOpen, onClose }: ExpenseInputSheetProps) {
           amount: item.amount,
           category: item.category,
           date,
+          type: "expense",
+          paymentMethod,
         });
       }
       setSuccess(true);

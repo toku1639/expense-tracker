@@ -167,11 +167,20 @@ service cloud.firestore {
     match /expenses/{expenseId} {
       allow read, write: if true;
     }
+    match /recurringExpenses/{recurringId} {
+      allow read, write: if true;
+    }
+    match /budgets/{budgetId} {
+      allow read, write: if true;
+    }
   }
 }
 ```
 
 **「公開」** をクリックして保存。
+
+> 固定費（繰り返し支出）機能を使う場合、`recurringExpenses` のルールも必須です。  
+> 既存プロジェクトで `expenses` だけ許可している場合は、上記のように追記して再公開してください。
 
 > **重要:** API キーはクライアントに含まれるため、他人と **同じプロジェクトを共有しない** でください。家族ごとに別プロジェクトを作ります。
 

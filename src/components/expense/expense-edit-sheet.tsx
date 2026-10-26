@@ -1,15 +1,20 @@
 "use client";
 
 import { Loader2, Trash2, X } from "lucide-react";
-import { useCallback, useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useExpenseInput } from "@/contexts/expense-input-context";
+import { CategoryIconBadge } from "@/lib/category-icons";
+import { PaymentMethodPicker } from "@/components/expense/payment-method-picker";
 import { deleteExpense, updateExpense } from "@/lib/expenses";
 import {
   EXPENSE_CATEGORIES,
-  type ExpenseCategory,
+  INCOME_CATEGORIES,
+  getTransactionType,
   type ExpenseDocument,
   type ExpenseInput,
+  type PaymentMethod,
+  type TransactionType,
 } from "@/types/expense";
 
 type ExpenseEditSheetProps = {
@@ -17,36 +22,50 @@ type ExpenseEditSheetProps = {
   onClose: () => void;
 };
 
-function normalizeCategory(category: string): ExpenseCategory {
-  return EXPENSE_CATEGORIES.includes(category as ExpenseCategory)
-    ? (category as ExpenseCategory)
-    : "その他";
-}
-
 export function ExpenseEditSheet({ expense, onClose }: ExpenseEditSheetProps) {
   const router = useRouter();
   const { notifyExpenseSaved } = useExpenseInput();
   const formId = useId();
 
+  const [type, setType] = useState<TransactionType>("expense");
   const [form, setForm] = useState<ExpenseInput>({
     itemName: "",
     amount: 0,
     category: EXPENSE_CATEGORIES[0],
     date: "",
+    type: "expense",
+    paymentMethod: "cash",
   });
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
   const [amountText, setAmountText] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
+  const categoryOptions = useMemo(() => {
+    const base =
+      type === "income"
+        ? [...INCOME_CATEGORIES]
+        : [...EXPENSE_CATEGORIES];
+    if (form.category && !base.includes(form.category as never)) {
+      return [form.category, ...base];
+    }
+    return base;
+  }, [type, form.category]);
+
   const resetFromExpense = useCallback((target: ExpenseDocument) => {
+    const t = getTransactionType(target);
+    setType(t);
     setForm({
       itemName: target.itemName,
       amount: target.amount,
-      category: normalizeCategory(target.category),
+      category: target.category,
       date: target.date,
+      type: t,
+      paymentMethod: target.paymentMethod ?? "cash",
     });
+    setPaymentMethod(target.paymentMethod ?? "cash");
     setAmountText(String(target.amount));
     setError(null);
     setSuccess(false);
@@ -90,6 +109,8 @@ export function ExpenseEditSheet({ expense, onClose }: ExpenseEditSheetProps) {
       amount,
       category: form.category,
       date: form.date,
+      type,
+      paymentMethod: type === "expense" ? paymentMethod : undefined,
     };
   };
 
@@ -159,8 +180,11 @@ export function ExpenseEditSheet({ expense, onClose }: ExpenseEditSheetProps) {
 
       <div className="pb-safe-lg relative mx-auto w-full max-w-lg rounded-t-2xl bg-white shadow-2xl">
         <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
-          <h2 id={`${formId}-title`} className="text-lg font-semibold text-slate-900">
-            支出を編集
+          <h2
+            id={`${formId}-title`}
+            className="text-lg font-semibold text-slate-900"
+          >
+            {type === "income" ? "収入を編集" : "支出を編集"}
           </h2>
           <button
             type="button"
@@ -172,8 +196,38 @@ export function ExpenseEditSheet({ expense, onClose }: ExpenseEditSheetProps) {
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="max-h-[75dvh] overflow-y-auto px-4 py-4">
+        <form
+          onSubmit={handleSubmit}
+          className="max-h-[75dvh] overflow-y-auto px-4 py-4"
+        >
           <div className="space-y-4">
+            <div className="flex overflow-hidden rounded-full border border-slate-200">
+              {(["expense", "income"] as const).map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => {
+                    setType(value);
+                    setForm((prev) => ({
+                      ...prev,
+                      type: value,
+                      category:
+                        value === "income"
+                          ? INCOME_CATEGORIES[0]
+                          : EXPENSE_CATEGORIES[0],
+                    }));
+                  }}
+                  className={`flex-1 py-2 text-sm font-semibold ${
+                    type === value
+                      ? "bg-slate-100 text-teal-700"
+                      : "text-slate-500"
+                  }`}
+                >
+                  {value === "expense" ? "支出" : "収入"}
+                </button>
+              ))}
+            </div>
+
             <div>
               <label
                 htmlFor={`${formId}-item`}
@@ -185,11 +239,12 @@ export function ExpenseEditSheet({ expense, onClose }: ExpenseEditSheetProps) {
                 id={`${formId}-item`}
                 type="text"
                 autoComplete="off"
+                placeholder="例: スーパー、スタバ"
                 value={form.itemName}
                 onChange={(e) =>
                   setForm((prev) => ({ ...prev, itemName: e.target.value }))
                 }
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-base outline-none ring-teal-600 focus:border-teal-500 focus:bg-white focus:ring-2"
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-base outline-none focus:border-teal-500 focus:bg-white focus:ring-2 focus:ring-teal-500/20"
               />
             </div>
 
@@ -208,27 +263,39 @@ export function ExpenseEditSheet({ expense, onClose }: ExpenseEditSheetProps) {
                 onChange={(e) =>
                   setAmountText(e.target.value.replace(/[^\d]/g, ""))
                 }
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-2xl font-semibold tabular-nums outline-none ring-teal-600 focus:border-teal-500 focus:bg-white focus:ring-2"
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-2xl font-semibold tabular-nums outline-none focus:border-teal-500 focus:bg-white focus:ring-2 focus:ring-teal-500/20"
               />
             </div>
+
+            {type === "expense" && (
+              <PaymentMethodPicker
+                value={paymentMethod}
+                onChange={setPaymentMethod}
+              />
+            )}
 
             <div>
               <span className="mb-1.5 block text-sm font-medium text-slate-700">
                 カテゴリ
               </span>
-              <div className="flex flex-wrap gap-2">
-                {EXPENSE_CATEGORIES.map((cat) => (
+              <div className="grid grid-cols-3 gap-2">
+                {categoryOptions.map((cat) => (
                   <button
                     key={cat}
                     type="button"
-                    onClick={() => setForm((prev) => ({ ...prev, category: cat }))}
-                    className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
+                    onClick={() =>
+                      setForm((prev) => ({ ...prev, category: cat }))
+                    }
+                    className={`flex flex-col items-center gap-1 rounded-2xl border px-2 py-2.5 ${
                       form.category === cat
-                        ? "bg-teal-600 text-white"
-                        : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                        ? "border-slate-400"
+                        : "border-slate-200"
                     }`}
                   >
-                    {cat}
+                    <CategoryIconBadge category={cat} type={type} size="sm" />
+                    <span className="text-[11px] font-medium text-slate-700">
+                      {cat}
+                    </span>
                   </button>
                 ))}
               </div>
@@ -248,7 +315,7 @@ export function ExpenseEditSheet({ expense, onClose }: ExpenseEditSheetProps) {
                 onChange={(e) =>
                   setForm((prev) => ({ ...prev, date: e.target.value }))
                 }
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-base outline-none ring-teal-600 focus:border-teal-500 focus:bg-white focus:ring-2"
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-base outline-none focus:border-teal-500 focus:bg-white focus:ring-2 focus:ring-teal-500/20"
               />
             </div>
           </div>
@@ -268,7 +335,7 @@ export function ExpenseEditSheet({ expense, onClose }: ExpenseEditSheetProps) {
           <button
             type="submit"
             disabled={busy}
-            className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-teal-600 py-3.5 text-base font-semibold text-white shadow-md shadow-teal-600/25 transition hover:bg-teal-700 disabled:opacity-60"
+            className="mt-6 flex w-full items-center justify-center gap-2 rounded-full bg-teal-600 py-3.5 text-base font-semibold text-white shadow-md disabled:opacity-60"
           >
             {submitting ? (
               <>
@@ -284,7 +351,7 @@ export function ExpenseEditSheet({ expense, onClose }: ExpenseEditSheetProps) {
             type="button"
             onClick={handleDelete}
             disabled={busy}
-            className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-red-200 bg-white py-3 text-sm font-semibold text-red-600 transition hover:bg-red-50 disabled:opacity-60"
+            className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-red-200 bg-white py-3 text-sm font-semibold text-red-600 disabled:opacity-60"
           >
             {deleting ? (
               <>
@@ -294,7 +361,7 @@ export function ExpenseEditSheet({ expense, onClose }: ExpenseEditSheetProps) {
             ) : (
               <>
                 <Trash2 className="h-4 w-4" />
-                この支出を削除
+                この取引を削除
               </>
             )}
           </button>

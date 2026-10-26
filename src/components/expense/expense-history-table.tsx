@@ -3,7 +3,11 @@
 import { Pencil } from "lucide-react";
 import { useExpenseInput } from "@/contexts/expense-input-context";
 import { formatAmount, formatDisplayDate } from "@/lib/format";
-import type { ExpenseDocument } from "@/types/expense";
+import {
+  getPaymentMethodLabel,
+  getTransactionType,
+  type ExpenseDocument,
+} from "@/types/expense";
 
 type ExpenseHistoryTableProps = {
   rows: ExpenseDocument[];
@@ -53,14 +57,26 @@ export function ExpenseHistoryTable({
                 {formatDisplayDate(expense.date)}
               </td>
               <td className="max-w-[140px] truncate px-3 py-2.5 font-medium text-slate-900">
-                {expense.itemName}
+                {expense.itemName || expense.category}
               </td>
               {showCategory && (
                 <td className="whitespace-nowrap px-3 py-2.5 text-slate-600">
                   {expense.category}
+                  {getTransactionType(expense) === "expense" && (
+                    <span className="mt-0.5 block text-[10px] text-slate-400">
+                      {getPaymentMethodLabel(expense.paymentMethod)}
+                    </span>
+                  )}
                 </td>
               )}
-              <td className="whitespace-nowrap px-3 py-2.5 text-right font-semibold tabular-nums text-slate-900">
+              <td
+                className={`whitespace-nowrap px-3 py-2.5 text-right font-semibold tabular-nums ${
+                  getTransactionType(expense) === "income"
+                    ? "text-sky-600"
+                    : "text-rose-500"
+                }`}
+              >
+                {getTransactionType(expense) === "income" ? "+" : "-"}
                 {formatAmount(expense.amount)}
               </td>
               <td className="px-2 py-2.5 text-teal-600/70">

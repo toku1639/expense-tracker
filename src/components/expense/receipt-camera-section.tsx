@@ -1,7 +1,16 @@
 "use client";
 
 import { Camera, Check, ImageUp, Loader2 } from "lucide-react";
-import { useCallback, useId, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
+import { PaymentMethodPicker } from "@/components/expense/payment-method-picker";
+import { fetchExpenseSuggestions } from "@/lib/expense-suggestions";
+import {
+  enrichReceiptItemsWithHistory,
+  getLastPaymentMethod,
+  getLastStoreName,
+  rememberLastPaymentMethod,
+  rememberLastStoreName,
+} from "@/lib/receipt-enrich";
 import {
   createReceiptPreviewUrl,
   isReceiptScanConfigured,
@@ -12,12 +21,23 @@ import {
   type ReceiptScanResponse,
   type ReceiptScanResult,
 } from "@/lib/receipt-scan";
+import {
+  normalizePaymentMethod,
+  type PaymentMethod,
+} from "@/types/expense";
 
 type ReceiptCameraSectionProps = {
   formDate: string;
   onApplyItem: (item: ReceiptScanResult, date?: string) => void;
   onReceiptDate?: (date: string) => void;
-  onSaveSelected: (items: ReceiptScanResult[], date: string) => Promise<void>;
+  onSaveSelected: (
+    items: ReceiptScanResult[],
+    date: string,
+    paymentMethod: PaymentMethod,
+  ) => Promise<void>;
+  /** フォーム側の支払方法（あれば初期値に使う） */
+  initialPaymentMethod?: PaymentMethod;
+  onPaymentMethodChange?: (method: PaymentMethod) => void;
   disabled?: boolean;
 };
 
@@ -26,6 +46,8 @@ export function ReceiptCameraSection({
   onApplyItem,
   onReceiptDate,
   onSaveSelected,
+  initialPaymentMethod,
+  onPaymentMethodChange,
   disabled = false,
 }: ReceiptCameraSectionProps) {
   const baseId = useId();
@@ -41,10 +63,31 @@ export function ReceiptCameraSection({
     null,
   );
   const [showErrorDetails, setShowErrorDetails] = useState(false);
+  const [justSaved, setJustSaved] = useState(false);
+  const [lastStoreHint, setLastStoreHint] = useState<string | null>(null);
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(
+    () =>
+      initialPaymentMethod ??
+      normalizePaymentMethod(getLastPaymentMethod()) ??
+      "cash",
+  );
 
   const configured = isReceiptScanConfigured();
   const cameraBusy = disabled || scanning || saving;
   const canPickImage = configured && !cameraBusy;
+
+  useEffect(() => {
+    setLastStoreHint(getLastStoreName());
+  }, []);
+
+  useEffect(() => {
+    if (initialPaymentMethod) setPaymentMethod(initialPaymentMethod);
+  }, [initialPaymentMethod]);
+
+  const handlePaymentMethodChange = (method: PaymentMethod) => {
+    setPaymentMethod(method);
+    onPaymentMethodChange?.(method);
+  };
 
   const clearPreview = useCallback(() => {
     setPreviewUrl((prev) => {
@@ -81,12 +124,23 @@ export function ReceiptCameraSection({
     });
 
     try {
+      setJustSaved(false);
       const result = await scanReceiptFromImage(file);
-      setScanResult(result);
-      setSelected(new Set(result.items.map((_, i) => i)));
+      const suggestions = await fetchExpenseSuggestions("expense").catch(
+        () => [],
+      );
+      const enrichedItems = enrichReceiptItemsWithHistory(
+        result.items,
+        suggestions,
+      );
+      const enriched = { ...result, items: enrichedItems };
+      setScanResult(enriched);
+      setSelected(new Set(enrichedItems.map((_, i) => i)));
+      rememberLastStoreName(enriched.storeName);
+      if (enriched.storeName) setLastStoreHint(enriched.storeName);
 
-      if (result.date) {
-        onReceiptDate?.(result.date);
+      if (enriched.date) {
+        onReceiptDate?.(enriched.date);
       }
     } catch (err) {
       clearPreview();
@@ -132,8 +186,12 @@ export function ReceiptCameraSection({
     setSaving(true);
     setError(null);
     try {
-      await onSaveSelected(items, date);
+      rememberLastPaymentMethod(paymentMethod);
+      await onSaveSelected(items, date, paymentMethod);
+      rememberLastStoreName(scanResult.storeName);
+      if (scanResult.storeName) setLastStoreHint(scanResult.storeName);
       clearScan();
+      setJustSaved(true);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "保存に失敗しました",
@@ -243,9 +301,15 @@ export function ReceiptCameraSection({
             <p className="mt-2 text-xs leading-relaxed text-amber-800">
               API キー未設定です。再デプロイ（npm run deploy:hosting）が必要な場合があります。
             </p>
+          ) : justSaved ? (
+            <p className="mt-2 text-xs font-medium leading-relaxed text-teal-800">
+              保存しました。続けて次のレシートを撮影できます
+              {lastStoreHint ? `（前回: ${lastStoreHint}）` : ""}
+            </p>
           ) : (
             <p className="mt-2 text-xs leading-relaxed text-teal-800/80">
-              撮影または保存済みの写真から、レシート明細を AI が読み取れます。
+              撮影または写真から明細を読み取り。過去の同品名があればカテゴリを自動補正します
+              {lastStoreHint ? ` · 前回店名: ${lastStoreHint}` : ""}
             </p>
           )}
         </div>
@@ -303,6 +367,16 @@ export function ReceiptCameraSection({
           <p className="text-xs text-slate-500">
             行をタップするとフォームに反映。チェックした項目をまとめて保存できます。
           </p>
+
+          <div className="rounded-xl bg-slate-50 p-2.5">
+            <p className="mb-2 text-xs font-medium text-slate-600">
+              このレシートの支払方法（撮影では判別できないため選択）
+            </p>
+            <PaymentMethodPicker
+              value={paymentMethod}
+              onChange={handlePaymentMethodChange}
+            />
+          </div>
 
           <button
             type="button"

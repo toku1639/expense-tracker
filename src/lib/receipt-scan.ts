@@ -6,7 +6,7 @@ import {
 export type ReceiptScanResult = {
   itemName: string;
   amount: number;
-  category: ExpenseCategory;
+  category: string;
 };
 
 export type ReceiptScanResponse = {
@@ -32,10 +32,17 @@ export function isReceiptScanConfigured(): boolean {
   return Boolean(process.env.NEXT_PUBLIC_GEMINI_API_KEY?.trim());
 }
 
-function normalizeCategory(value: string): ExpenseCategory {
+function normalizeCategory(value: string): string {
   const trimmed = value.trim();
   if (CATEGORY_SET.has(trimmed)) return trimmed as ExpenseCategory;
-  return "その他";
+
+  const aliases: Record<string, ExpenseCategory> = {
+    医療: "医療費",
+    交通: "交通費",
+    住居: "住居費",
+    娯楽: "交際費",
+  };
+  return aliases[trimmed] ?? "その他";
 }
 
 function parseDate(value: unknown): string | undefined {
